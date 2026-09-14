@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://daslab.dev/schemas/scene-blueprint-v1.json",
   "title": "Scene Blueprint v1",
-  "description": "Declarative blueprint for a Daslab scene tree — typed slots, recurring agent tasks, evaluable scenarios, access grants. The blueprint is itself a scene-block: flat identity + content fields, with recursive `scenes[]` for children. v1 applier implements scene/assets/linkedAssets/schedules/members; other fields (inputs, secrets, extends, tasks, hooks, outputs) are reserved.",
+  "description": "Declarative blueprint for a Daslab scene tree — typed slots, recurring agent tasks, evaluable scenarios, access grants. The blueprint is itself a scene-block: flat identity + content fields, with recursive `scenes[]` for children. v1 applier implements scene/assets/linkedAssets/schedules/subscriptions/members; other fields (inputs, secrets, extends, tasks, hooks, outputs) are reserved.",
   "type": "object",
   "$ref": "#/$defs/sceneBlock",
 
@@ -204,7 +204,38 @@
               "runAs":   { "type": "string", "pattern": "^[a-z0-9_-]+$", "description": "Role slug to scope the run's layer permissions. References a `roles[]` slug or built-in (owner|editor|viewer). Defaults to the scene's owner-attribution." },
               "tools":   { "type": "object", "additionalProperties": false, "properties": { "allow": { "type": "array", "items": { "type": "string" } }, "deny": { "type": "array", "items": { "type": "string" } } }, "description": "Optional override of the scene's tool allow/deny. Omit to inherit scene defaults." },
               "enabled": { "type": "boolean", "default": true, "description": "Cron only fires when true. Use false to pause without deleting the template." },
-              "checks":  { "type": "array", "items": { "$ref": "#/$defs/check" }, "description": "Per-run success criteria evaluated against the completed run." }
+              "checks":  { "type": "array", "items": { "$ref": "#/$defs/check" }, "description": "Per-run success criteria evaluated against the completed run." },
+              "approval_rules": { "type": "array", "description": "Where each run may act without asking. Runs auto-approve writes inside the workspace; a send that reaches people outside it (chat, mail, SMS, invites) waits for a human unless a rule allows it. Example: `{ \"tool\": \"line_send\", \"field\": \"to\", \"prefix\": \"user:\" }`.", "items": { "type": "object", "required": ["tool"], "additionalProperties": false, "properties": { "tool": { "type": "string" }, "field": { "type": "string" }, "prefix": { "type": "string" } } } }
+            }
+          }
+        },
+
+        "subscriptions": {
+          "description": "Event-driven counterpart to `schedules`: watch a stream of external events (webhooks, polls), grade each event through an ordered cascade, and run a job only when a grader accepts. A schedule fires on a clock; a subscription fires on a meaningful change.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "on", "run"],
+            "additionalProperties": false,
+            "properties": {
+              "id":      { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+              "on":      { "type": "string", "description": "Stream pattern `<provider>[:<event>[:<scope>]]` with `*` wildcards. Examples: `github:push:octocat/hello-world` (pushes to one repo), `github:*:octocat/hello-world` (any event on that repo), `gmail:message:user@example.com` (mailbox notifications), `render:deploy_ended:srv-abc123` (deploy completions for one service)." },
+              "graders": {
+                "type": "array",
+                "items": { "type": "string" },
+                "default": ["always"],
+                "description": "Ordered decision cascade, cheapest-first; each stage rejects (stop), defers (next stage), or accepts (run now). Entries: `always` (accept), `cel:<expr>` (CEL filter over `event`; falsy rejects), `hash:<expr>` (reject when the selected value is unchanged since the last accepted event), `llm:<question>` (model judge; on accept its reason is passed to the run as the gap). A filter is a grader; a change-check is a grader — one primitive."
+              },
+              "run":     {
+                "oneOf": [
+                  { "type": "string", "description": "Prompt for the run (an agent job with the event payload and grader gap prepended)." },
+                  { "type": "object", "required": ["prompt"], "additionalProperties": false, "properties": { "prompt": { "type": "string" }, "approval_rules": { "type": "array", "description": "Where each run may act without asking; a send that reaches people outside the workspace waits for a human unless a rule allows it. Example: `{ \"tool\": \"line_send\", \"field\": \"to\", \"prefix\": \"user:\" }`.", "items": { "type": "object", "required": ["tool"], "additionalProperties": false, "properties": { "tool": { "type": "string" }, "field": { "type": "string" }, "prefix": { "type": "string" } } } } } },
+                  { "type": "object", "required": ["program"], "additionalProperties": false, "properties": { "program": { "type": "string", "description": "Saved-program name to call (runs without an LLM). Receives `event` and `gap` as inputs." }, "inputs": { "type": "object", "description": "Extra inputs merged into the program call." }, "approval_rules": { "type": "array", "description": "Where each run may act without asking; a send that reaches people outside the workspace waits for a human unless a rule allows it.", "items": { "type": "object", "required": ["tool"], "additionalProperties": false, "properties": { "tool": { "type": "string" }, "field": { "type": "string" }, "prefix": { "type": "string" } } } } } }
+                ],
+                "description": "What runs when a grader accepts — the run is the only actor that commits scene state."
+              },
+              "budget":  { "type": "string", "pattern": "^[0-9]+[km]?/[0-9]+$", "description": "`<tokens>/<max_iterations>` bound for the run, e.g. `100k/5`." },
+              "enabled": { "type": "boolean", "default": true, "description": "Events only dispatch when true. Use false to pause without deleting." }
             }
           }
         },
